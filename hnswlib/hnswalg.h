@@ -49,6 +49,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     char *data_level0_memory_{nullptr};
     char **linkLists_{nullptr};
     std::vector<int> element_levels_;  // keeps level of each element
+    
+    // array of pointers where knnsets[i] = knn priority queue for point i
+    // std::vector<std::priorityqueue<dist_t, tableint> *> knnsets_; 
 
     size_t data_size_{0};
 
@@ -134,6 +137,13 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         size_links_per_element_ = maxM_ * sizeof(tableint) + sizeof(linklistsizeint);
         mult_ = 1 / log(1.0 * M_);
         revSize_ = 1.0 / mult_;
+
+        /*
+        allocate space for knn set pointers
+        try { knnsets_.reserve(max_elements_); }
+        catch (int e) { throw std::runtime_error ("Something went wrong reserving space for knnsets"); }
+        
+        */
     }
 
 
@@ -208,6 +218,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return num_deleted_;
     }
 
+
+
+/**
+ * TODO modify searchBaseLayer to take an initial priority queue of entry points
+*/
     std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
     searchBaseLayer(tableint ep_id, const void *data_point, int layer) {
         VisitedList *vl = visited_list_pool_->getFreeVisitedList();
@@ -869,6 +884,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             throw std::runtime_error("Replacement of deleted elements is disabled in constructor");
         }
 
+        // The rest of this procedure can be just these two lines for our purposes:
+        // std::unique_lock <std::mutex> lock_label(getLabelOpMutex(label));
+        // addPoint(data_point, label, -1); // means insert new point into index
+
         // lock all operations with element by label
         std::unique_lock <std::mutex> lock_label(getLabelOpMutex(label));
         if (!replace_deleted) {
@@ -1163,12 +1182,45 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     if (top_candidates.size() > ef_construction_)
                         top_candidates.pop();
                 }
+                
+                /* Update initial KNNSets for each inserted data point
+                    may need mutexes for accessing knn sets
+
+                if (level == 0) {
+                    // for now dumb solution, retrieve top 100 from top_candidates
+                    // and reinsert them back into top_candidates
+                    
+                    knnsets_[cur_c] = new priorityqueue // allocate new knnset for inserted datapoint
+
+                    std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> temp;
+                    std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>> *knnset = knnsets_[cur_c];
+                    
+                    for (int j = top_candidates.size()-1; j >= 0; j--) {
+                        item = top_candidates.top()
+                        if (j < 100) knnset->emplace(item.first, item.second) // should knnset size be k=100 or ef_construction?
+                        
+                        // update inserted node's found-neighbors' knnsets with inserted node if applicable
+                        nsofitem = getKNNSet(item.second)
+                        if (nsofitem->top().first > item.first) {
+                            nsofitem->emplace(item.first, cur_c)
+                            if (nsofitem->size() > 100) nsofitem.pop() 
+                        }
+                        temp.emplace(item.first, item.second)
+                        top_candidates.pop()
+                    }
+
+                    top_candidates = temp
+                    
+                }
+                */
+
                 currObj = mutuallyConnectNewElement(data_point, cur_c, top_candidates, level, false);
             }
         } else {
             // Do nothing for the first element
             enterpoint_node_ = 0;
             maxlevel_ = curlevel;
+            // knnsets_[0] = new priorityqueue
         }
 
         // Releasing lock for the maximum level
@@ -1178,6 +1230,23 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
         return cur_c;
     }
+
+    /**
+     * Additional methods
+     * 
+     * retrieve the priority queue tracking the current KNN set for data point q
+     * std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>> *
+     * getKNNSet(tableint q) { return knnsets_[q]; }
+     * 
+     * Return the best neighbors for item q from deepsearching HNSW
+     * std::priorityqueue<....> deepSearch(tableint q) {
+     *  knns = getKNNSet(q)
+     *  ef_construction_ = 100
+     *  newknns = searchBaseLayer(knns, getDataByInternalId(q), 0)
+     *  delete knns
+     *  return newknns
+     * }
+    */
 
 
     std::priority_queue<std::pair<dist_t, labeltype >>
